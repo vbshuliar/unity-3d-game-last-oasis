@@ -1,119 +1,123 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.AI;
 
-[RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(PlayerInput))]
 public class PlayerController : MonoBehaviour
 {
-    [Header("Movement Settings")]
-    [SerializeField] private float walkSpeed = 3f;
-    [SerializeField] private float sprintSpeed = 6f;
-    [SerializeField] private float rotationSpeed = 10f;
+    const string IDLE = "Idle";
+    const string RUN = "Run";
 
-    [Header("Gravity")]
-    [SerializeField] private float gravity = -9.81f;
-    [SerializeField] private float groundedGravity = -0.5f;
+    CustomActions input;
 
-    private CharacterController controller;
-    private PlayerInput playerInput;
+    NavMeshAgent agent;
+    Animator animator;
 
-    private Vector2 moveInput;
-    private bool isSprintPressed;
-    private Vector3 velocity;
-    private bool isGrounded;
+    [Header("Movement")]
+    [SerializeField] ParticleSystem clickEffect;
+    [SerializeField] LayerMask clickableLayers;
 
-    // Public properties for other scripts to access
-    public Vector2 MoveInput => moveInput;
-    public bool IsMoving => moveInput.magnitude > 0.1f;
-    public bool IsSprinting => IsMoving && isSprintPressed;
-    public float CurrentSpeed => IsSprinting ? sprintSpeed : walkSpeed;
-    public bool IsGrounded => isGrounded;
+    float lookRotationSpeed = 8f;
+    Vector3 lastMoveDirection;
 
-    private void Awake()
+    float clickEffectInterval = 0.2f; // 200ms in seconds
+    float lastClickEffectTime = 0f;
+
+    void Awake()
     {
-        controller = GetComponent<CharacterController>();
-        playerInput = GetComponent<PlayerInput>();
+        agent = GetComponent<NavMeshAgent>();
+        animator = GetComponent<Animator>();
+
+        input = new CustomActions();
+        AssignInputs();
     }
 
-    private void OnEnable()
+    void AssignInputs()
     {
-        if (playerInput != null)
+        // No need to subscribe to performed event anymore
+        // We'll check the button state in Update instead
+    }
+
+    void ClickToMove()
+    {
+        RaycastHit hit;
+        if (Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hit, 100, clickableLayers))
         {
-            playerInput.actions["Move"].performed += OnMovePerformed;
-            playerInput.actions["Move"].canceled += OnMoveCanceled;
-            playerInput.actions["Sprint"].performed += OnSprintPerformed;
-            playerInput.actions["Sprint"].canceled += OnSprintCanceled;
+            agent.destination = hit.point;
         }
     }
 
-    private void OnDisable()
+    void SpawnClickEffect()
     {
-        if (playerInput != null)
+        RaycastHit hit;
+        if (Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hit, 100, clickableLayers))
         {
-            playerInput.actions["Move"].performed -= OnMovePerformed;
-            playerInput.actions["Move"].canceled -= OnMoveCanceled;
-            playerInput.actions["Sprint"].performed -= OnSprintPerformed;
-            playerInput.actions["Sprint"].canceled -= OnSprintCanceled;
+            if (clickEffect != null)
+            { Instantiate(clickEffect, hit.point + new Vector3(0, 0.1f, 0), clickEffect.transform.rotation); }
         }
     }
 
-    private void OnMovePerformed(InputAction.CallbackContext context)
-    {
-        moveInput = context.ReadValue<Vector2>();
-    }
+    void OnEnable()
+    { input.Enable(); }
 
-    private void OnMoveCanceled(InputAction.CallbackContext context)
-    {
-        moveInput = Vector2.zero;
-    }
+    void OnDisable()
+    { input.Disable(); }
 
-    private void OnSprintPerformed(InputAction.CallbackContext context)
+    void Update()
     {
-        isSprintPressed = true;
-    }
+        // Check if Mouse.current is available
+        if (Mouse.current == null) return;
 
-    private void OnSprintCanceled(InputAction.CallbackContext context)
-    {
-        isSprintPressed = false;
-    }
-
-    private void Update()
-    {
-        HandleMovement();
-    }
-
-    private void HandleMovement()
-    {
-        // Check if grounded
-        isGrounded = controller.isGrounded;
-
-        // Apply grounded gravity when on ground to keep player stuck to ground
-        if (isGrounded && velocity.y < 0)
+        // Spawn effect immediately on first press
+        if (Mouse.current.rightButton.wasPressedThisFrame)
         {
-            velocity.y = groundedGravity;
+            SpawnClickEffect();
+            lastClickEffectTime = Time.time;
+            Debug.Log("First click - Effect spawned at time: " + Time.time);
         }
 
-        // Get movement direction from input
-        Vector3 moveDirection = new Vector3(moveInput.x, 0f, moveInput.y);
-
-        // Only move and rotate if there's input
-        if (moveDirection.magnitude >= 0.1f)
+        // Check if right mouse button is held down
+        if (Mouse.current.rightButton.isPressed)
         {
-            // Calculate target rotation based on movement direction
-            float targetAngle = Mathf.Atan2(moveDirection.x, moveDirection.z) * Mathf.Rad2Deg;
-            float angle = Mathf.LerpAngle(transform.eulerAngles.y, targetAngle, rotationSpeed * Time.deltaTime);
-            transform.rotation = Quaternion.Euler(0f, angle, 0f);
+            ClickToMove();
 
-            // Determine current speed (walk or sprint)
-            float currentSpeed = IsSprinting ? sprintSpeed : walkSpeed;
-
-            // Move the character
-            Vector3 move = moveDirection.normalized * currentSpeed;
-            controller.Move(move * Time.deltaTime);
+            // Spawn effect repeatedly every 300ms while holding
+            float timeSinceLastEffect = Time.time - lastClickEffectTime;
+            if (timeSinceLastEffect >= clickEffectInterval)
+            {
+                SpawnClickEffect();
+                lastClickEffectTime = Time.time;
+                Debug.Log("Repeat effect spawned at time: " + Time.time + " (interval: " + timeSinceLastEffect + ")");
+            }
         }
 
-        // Apply gravity
-        velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+        FaceTarget();
+        SetAnimations();
+    }
+
+    void FaceTarget()
+    {
+        // Only rotate if moving
+        if (agent.velocity.sqrMagnitude > 0.1f)
+        {
+            // Use actual movement direction (velocity) instead of destination
+            lastMoveDirection = agent.velocity.normalized;
+        }
+
+        // If we have a valid direction to face, rotate towards it
+        if (lastMoveDirection != Vector3.zero)
+        {
+            Quaternion lookRotation = Quaternion.LookRotation(new Vector3(lastMoveDirection.x, 0, lastMoveDirection.z));
+            transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * lookRotationSpeed);
+        }
+    }
+
+    void SetAnimations()
+    {
+        if (agent.velocity == Vector3.zero)
+        { animator.Play(IDLE); }
+        else
+        { animator.Play(RUN); }
     }
 }

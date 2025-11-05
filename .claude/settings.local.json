@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(find Assets/Materials -maxdepth 1 -name \"*.meta\" -exec sh -c 'basename=$(basename \"\"$1\"\" .meta); [ -f \"\"Assets/Materials/Gems/$basename\"\" ] && mv \"\"$1\"\" \"\"Assets/Materials/Gems/\"\" || [ -f \"\"Assets/Materials/DesertVillage/$basename\"\" ] && mv \"\"$1\"\" \"\"Assets/Materials/DesertVillage/\"\" || true' _ {} ;)",
+      "Bash(find:*)",
+      "Bash(xargs:*)",
+      "Bash(rmdir:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
